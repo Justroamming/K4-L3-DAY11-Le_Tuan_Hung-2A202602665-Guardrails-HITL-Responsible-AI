@@ -42,6 +42,11 @@ InputStatus = Literal["ALLOW", "BLOCK"]
 # Regex is one signal, not the whole security boundary.
 # ============================================================
 
+def _normalize_unicode(text: str) -> str:
+    """Remove invisible Unicode characters that attackers use to bypass filters."""
+    return re.sub(r"[\u200b-\u200f\u202a-\u202e\u2060-\u206f\ufeff]", "", text)
+
+
 def detect_injection(user_input: str) -> InputStatus:
     """Detect prompt injection patterns in user input.
 
@@ -51,14 +56,26 @@ def detect_injection(user_input: str) -> InputStatus:
     Returns:
         ``"BLOCK"`` if injection detected (chặn), ``"ALLOW"`` otherwise (cho qua).
     """
+    normalized = _normalize_unicode(user_input)
+    normalized_lower = normalized.lower()
+
     INJECTION_PATTERNS = [
-        # TODO: Add at least 5 regex patterns
-        # Example:
-        # r"ignore (all )?(previous|above) instructions",
+        r"ignore\s+(all\s+)?(previous|above|earlier)\s+instructions?",
+        r"you\s+are\s+now",
+        r"system\s+prompt",
+        r"reveal\s+your\s+(instructions?|prompt)",
+        r"pretend\s+you\s+are",
+        r"act\s+as\s+(a|an)?\s*unrestricted",
+        r"disregard\s+(all\s+)?(previous|above|earlier)\s+(instructions?|prompts?)",
+        r"forget\s+(all\s+)?(previous|above|earlier)\s+(instructions?|prompts?)",
+        r"override\s+(system\s+)?(instructions?|prompts?)",
+        r"bypass\s+(safety|security|filter)",
+        r"jailbreak",
+        r"roleplay\s+as\s+(an?\s+)?(unrestricted|admin|developer)",
     ]
 
     for pattern in INJECTION_PATTERNS:
-        if re.search(pattern, user_input, re.IGNORECASE):
+        if re.search(pattern, normalized_lower, re.IGNORECASE):
             return "BLOCK"
     return "ALLOW"
 
@@ -86,12 +103,15 @@ def topic_filter(user_input: str) -> InputStatus:
     """
     input_lower = user_input.lower()
 
-    # TODO: Implement logic:
-    # 1. If input contains any blocked topic -> return "BLOCK"
-    # 2. If input doesn't contain any allowed topic -> return "BLOCK"
-    # 3. Otherwise -> return "ALLOW"
+    for blocked in BLOCKED_TOPICS:
+        if blocked in input_lower:
+            return "BLOCK"
 
-    pass  # Replace with your implementation
+    has_allowed = any(allowed in input_lower for allowed in ALLOWED_TOPICS)
+    if not has_allowed:
+        return "BLOCK"
+
+    return "ALLOW"
 
 
 # ============================================================
@@ -144,14 +164,21 @@ class InputGuardrailPlugin(base_plugin.BasePlugin):
         self.total_count += 1
         text = self._extract_text(user_message)
 
-        # TODO: Implement logic:
-        # 1. Call detect_injection(text)
-        #    - If "BLOCK": increment blocked_count, return self._block_response("...")
-        # 2. Call topic_filter(text)
-        #    - If "BLOCK": increment blocked_count, return self._block_response("...")
-        # 3. If both return "ALLOW": return None (let message through)
+        injection_result = detect_injection(text)
+        if injection_result == "BLOCK":
+            self.blocked_count += 1
+            return self._block_response(
+                "I cannot process that request. It appears to contain a prompt injection attempt."
+            )
 
-        pass  # Replace with your implementation
+        topic_result = topic_filter(text)
+        if topic_result == "BLOCK":
+            self.blocked_count += 1
+            return self._block_response(
+                "I can only help with VinBank banking questions."
+            )
+
+        return None
 
 
 # ============================================================
